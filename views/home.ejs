@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+     <meta charset="UTF-8">
+     <meta http-equiv="X-UA-Compatible" content="IE=edge">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+     <title>Home</title>
+</head>
+<body>
+     <a href="http://localhost:4000/api/user/auth">Steam</a>
+     <a href="http://localhost:4000/api/user/logout">Logout</a>
+
+     <div id="notifications-container"></div>
+
+     <script>
+          const socket = new WebSocket('ws://localhost:4000');
+          const notificationsContainer = document.getElementById('notifications-container');
+          const notificationsMap = new Map();
+        
+          socket.onmessage = (event) => {
+               const data = JSON.parse(event.data);
+               console.log('Received online user count:', data.onlineUsers);
+        
+               if (data.pingResult) {
+                    const { target, ms } = data.pingResult;
+                    console.log(`Ping to ${target} took ${ms} milliseconds`);
+               }
+        
+               if (data.type === 'notification') {
+                    const notification = data.data;
+                    displayNotification(notification);
+               }
+          };
+
+          function displayNotification(notification) {
+               const notificationId = notification._id;
+
+               if (notificationsMap.has(notificationId)) {
+                    
+                    const existingNotification = notificationsMap.get(notificationId);
+                    existingNotification.textContent = `Updated Notification: ${notification.title} - ${notification.description}`;
+
+               } else {
+
+                    const newNotification = document.createElement('div');
+                    newNotification.textContent = `New Notification: ${notification.title} - ${notification.description}`;
+                    notificationsMap.set(notificationId, newNotification);
+                    notificationsContainer.appendChild(newNotification);
+
+                    setTimeout(() => {
+                         notificationsContainer.removeChild(newNotification);
+                         notificationsMap.delete(notificationId);
+                    }, 70000);
+               };
+          };
+     </script>        
+</body>
+</html>
