@@ -8,8 +8,6 @@ const { generateToken } = require("../config/jwtToken.js");
 const { generateRefreshToken } = require("../config/refreshToken.js");
 const { broadcastNotification } = require("../socket/socketHandler.js");
 
-const BLACKLIST = [process.env.BLACKLIST];
-
 // create notification real-time
 const createNotification = asyncHandler(async (req, res) => {
      const id = req.user;
@@ -42,27 +40,43 @@ const SignIn = asyncHandler(async (req, res) => {
 
      try {
 
+          // Поиск пользователя в базе данных по идентификатору из Steam
           let user = await User.findOne({ _id: steamUser.id });
 
+          // Если пользыватель не найден создаем нового пользывателя
           if (!user) {
+
                user = await User.create({
                     _id: steamUser.id,
                     steamUsername:steamUser.displayName,
                     avatar: steamUser.photos[2].value,
                     token: generateToken(steamUser.id),
+                    sessions: [{ start: new Date(), end: null }],
                });
+
           } else {
 
+               // Обновляем информацию о последней сессии
+               const lastSession = user.sessions[user.sessions.length - 1];
+
+               // Если пользыватель существует обновляем временную метку окончания сеанса
+               if (lastSession.end === null) {
+                    lastSession.end = new Date();
+               };
+
+               // Генерация токенов обновление в базе данных 
                const refreshToken = await generateRefreshToken(steamUser.id);
                const updateUser = await User.findByIdAndUpdate(steamUser.id, {
                     refreshToken: refreshToken,
                }, { new: true });
 
+               // так а тут мы короче устанавливаем cookie with refresh token
                res.cookie("refreshToken", refreshToken, {
                     httpOnly: true,
                     maxAge: 72 * 60 * 60 * 1000,
                })
 
+               // обновляем пользывателя
                user.avatar = steamUser.photos[2].value;
                user.steamUsername = steamUser.displayName;
 
@@ -124,6 +138,72 @@ const refreshToken = asyncHandler(async (req, res) => {
 
      const accessToken = generateRefreshToken(user?._id);
      res.json({ accessToken });
+});
+
+// get daily active users
+const getDailyActiveUsers = asyncHandler(async (req, res) => {
+     try {
+
+          const currentData = new Date();
+          currentData.setHours(0, 0, 0, 0);
+
+          const dayCount = await User.countDocuments({
+               createdAt: { $gte: currentData },
+          });
+
+          res.json({ day: dayCount });
+
+     } catch (error) {
+          throw new Error(error);
+     };
+});
+
+// get weekly active users
+const getWeeklyActiveUsers = asyncHandler(async (req, res) => {
+     try {
+
+          const currentDate = new Date();
+          const startOfWeek = new Date(
+               currentDate.getFullYear(),
+               currentDate.getMonth(),
+               currentDate.getDate() - currentDate.getDay(),
+          );
+
+          startOfWeek.setHours(0, 0, 0, 0);
+
+          const wauCount = await User.countDocuments({
+               createdAt: { $gte: startOfWeek },
+          });
+
+          res.json({ wau: wauCount });
+
+     } catch (error) {
+          throw new Error(error);
+     };
+});
+
+// get monthly active users 
+const getMonthlyActiveUsers = asyncHandler(async (req, res) => {
+     try {
+
+          const currentDate = new Date();
+          const startOfMonth = new Date(
+               currentDate.getFullYear(),
+               currentDate.getMonth(),
+               1
+          );
+
+          startOfMonth.setHours(0, 0, 0, 0);
+
+          const mauCount = await User.countDocuments({
+               createdAt: { $gte: startOfMonth },
+          });
+         
+          res.json({ mau: mauCount });
+
+     } catch (error) {
+          throw new Error(error);
+     };
 });
 
 // get all a user
@@ -237,6 +317,94 @@ const getAllNotification = asyncHandler(async (req, res) => {
      };
 });
 
+// сalculate session statistics
+const getSessionStatisticUser = asyncHandler(async (req, res) => {
+     try {
+
+          const currentDate = new Date();
+          const startOfDay = new Date(
+               currentDate.getFullYear(),
+               currentDate.getMonth(),
+               currentDate.getDay(),
+               0,
+               0,
+               0
+          );
+
+          const startOfWeek = new Date(
+               currentDate.getFullYear(),
+               currentDate.getMonth(),
+               currentDate.getDate() - currentDate.getDay(),
+               0,
+               0,
+               0
+          );
+
+          const startOfMonth = new Date(
+               currentDate.getFullYear(),
+               currentDate.getMonth(),
+               1,
+               0,
+               0,
+               0
+          );
+
+          const users = await User.find({ });
+
+          const dalySessions = users.reduce((count, user) => {
+               const sessions = user.sessions.filter((session) => {
+                    session.start >= startOfDay;
+               });
+
+               count += sessions.length;
+               return count;
+          }, 0);
+
+          const weeklySessions = users.reduce((count, user) => {
+               const sessions = user.sessions.filter((session) => {
+                    session.start >= startOfWeek;
+               });
+
+               count += sessions.length;
+               return count;
+          }, 0);
+
+          const monthlySessions = users.reduce((count, user) => {
+               const sessions = user.sessions.filter((session) => {
+                    session.start >= startOfMonth;
+               });
+
+               count += sessions.length;
+               return count;
+          }, 0);
+
+          const totalSessions = users.reduce((total, user) => {
+               user.sessions.forEach((session) => {
+
+                    if (session.end !== null) {
+                         total += session.end - session.start;
+                    };
+
+               });
+
+               return total;
+          }, 0);
+
+          const averageSessionDuration =
+               totalSessions / (dalySessions + weeklySessions + monthlySessions);
+
+          res.json({
+               dalySessions,
+               weeklySessions,
+               monthlySessions,
+               averageSessionDuration: averageSessionDuration || 0,
+          });
+
+     } catch (error) {
+          throw new Error(error);
+     };
+});
+
 // get a notification
 const getNotification = asyncHandler(async (req, res) => {
      const { id } = req.params;
@@ -271,61 +439,86 @@ const blockUser = asyncHandler(async (req, res) => {
      };
 });
 
-const blockBlacklistedIP = asyncHandler(async (req, res, next) => {
-     const userIP = req.ip || req.connection.remoteAddress;
-
+// unblock a user
+const unBlockUser = asyncHandler(async (req, res) => {
+     const { id } = req.params;
+     validateMongoDbId(id);
+     
      try {
-
-          if (ip.isV4Format(userIP) || ip.isV6Format(userIP)) {
-               if (BLACKLIST.indexOf(userIP) !== -1) {
-                    throw new Error("IP is blacklisted");
-               } else {
-                    next()
-               };
-          } else {
-               throw new Error("Invalid IP address format");
-          };
-
+          
+          const block = await User.findByIdAndUpdate(id, {
+               isBlocked: false,
+          }, { new: true });
+          
+          res.json(block);
+          
      } catch (error) {
           throw new Error(error);
-     }
-})
+     };
+});
 
 // block a user IP address
 const blockUserIP = asyncHandler(async (req, res) => {
      const { id } = req.params;
-     const userIP = req.ip || req.connection.remoteAddress;
 
      try {
 
-          if (ip.isV4Format(userIP) || ip.isV6Format(userIP)) {
-               const user = await User.findByIdAndUpdate(id, {
-                    ipAddress: userIP,
-                    isBlocked: true,
-               }, { new: true });
-       
-               res.json(user);
-          } else {
-               res.status(400).json({ error: "Invalid IP address format" });
+          const userIP = req.ip || req.connection.remoteAddress;
+
+          if (!(ip.isV4Format(userIP) || ip.isV6Format(userIP))) {
+               throw new Error("Invalid IP address format");
           };
+
+          const user = await User.findById(id);
+          if (!user) throw new Error(error);
+
+          if (user.isBlockedIPs.includes(userIP)) {
+               throw new Error("User's IP is already blocked");
+          };
+
+          user.isBlockedIPs.push(userIP);
+          user.isBlocked = true;
+          await user.save();
+
+          console.log(`User ${user.steamUsername} IP (${userIP}) blocked successfully`);
+
+          res.json({ message: `User's IP (${userIP}) blocked successfully` });
 
      } catch (error) {
           throw new Error(error);
      };
 });
 
-// unblock a user
-const unBlockUser = asyncHandler(async (req, res) => {
+// unBlock = user IP address
+const unBlockUserIP = asyncHandler(async (req, res) => {
      const { id } = req.params;
-     validateMongoDbId(id);
 
      try {
 
-          const block = await User.findByIdAndUpdate(id, {
-               isBlocked: false,
-          }, { new: true });
+          const userIP = req.ip || req.connection.remoteAddress;
 
-          res.json(block);
+          if (!(ip.isV4Format(userIP) || ip.isV6Format(userIP))) {
+               throw new Error("Invalid IP address format");
+          };
+
+          const user = await User.findById(id);
+          if (!user) throw new Error(error);
+
+          if (!user.isBlockedIPs.includes(userIP)) {
+               res.json({ error: "User's IP is not blocked" });
+          }
+         
+          user.isBlockedIPs = user.isBlockedIPs.filter((blockedIP) => blockedIP !== userIP);
+
+          if (user.isBlockedIPs.length === 0) {
+               user.isBlocked = false;
+          };
+
+          await user.save();
+
+          console.log(`User ${user.steamUsername} IP (${userIP}) unblocked successfully`);
+
+          res.json({ message: `User's IP (${userIP}) unblocked successfully` });
 
      } catch (error) {
           throw new Error(error);
@@ -428,14 +621,19 @@ module.exports = {
      getUser, 
      getNotification,
      getAllNotification,
+     getDailyActiveUsers,
+     getWeeklyActiveUsers,
+     getMonthlyActiveUsers,
+     getSessionStatisticUser,
      logoutUser,
      refreshToken,
      updateNotification,
      updateRoleUser,
-     removeRoleUser,
      blockUser, 
-     blockUserIP,
      unBlockUser, 
+     blockUserIP,
+     unBlockUserIP,
+     removeRoleUser,
      deleteUser,
      deleteNotification,
 };

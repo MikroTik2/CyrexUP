@@ -19,6 +19,10 @@ let userSchema = new mongoose.Schema({
           type:Boolean,
           default: false,
      },
+     isBlockedIPs: {
+          type: [String],
+          default: [],
+     },
      role: {
           type:String,
           enum: ["user", "moderator", "streamer", "youtuber", "admin", "superadmin",],
@@ -28,7 +32,10 @@ let userSchema = new mongoose.Schema({
           type: String,
           required: true
      },
+
      notifications: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Notification' }],
+     sessions: [{ start: Date, end: Date }],
+
      token: String,
      refreshToken: String,
 }, { timestamps: true });
