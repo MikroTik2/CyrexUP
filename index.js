@@ -16,6 +16,7 @@ const { notFound, errorHandler } = require("./middleware/errorHandler.js");
 const { initializeWebSocket } = require("./socket/socketHandler.js");
 
 const userRoute = require("./routes/userRoute.js");
+const supportRoute = require("./routes/supportRoute.js");
 
 const app = express();
 const PORT = process.env.PORT || process.env.PORT_NODE;
@@ -106,6 +107,7 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api/user", userRoute);
+app.use("/api/support", supportRoute);
 
 app.use(notFound);
 app.use(errorHandler);

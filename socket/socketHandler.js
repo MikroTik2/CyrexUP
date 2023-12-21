@@ -54,6 +54,32 @@ const initializeWebSocket = (server) => {
     });
 
     return wss;
-}
+};
 
-module.exports = { initializeWebSocket, broadcastNotification };
+const broadcastSupportUpdate = (supportTicket) => {
+    try {
+
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'supportUpdate', data: supportTicket }));
+            };
+        });
+         
+    } catch (error) {
+        throw new Error(error);
+    };
+};
+
+const broadcastChatMessage = async (message) => {
+    try {
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'chatMessage', data: message }));
+            }
+        });
+    } catch (error) {
+        throw new Error(error);
+    }
+};
+
+module.exports = { initializeWebSocket, broadcastNotification, broadcastSupportUpdate, broadcastChatMessage };

@@ -1,9 +1,10 @@
 const User = require("../models/userModel.js");
 const Notification = require("../models/notificationModels.js");
+const Coupon = require("../models/couponModel.js");
 const validateMongoDbId = require("../utils/validateMongoDbId.js");
 const asyncHandler = require("express-async-handler");
 const jwt = require("jsonwebtoken");
-const ip = require('ip');
+const axios = require("axios");
 const { generateToken } = require("../config/jwtToken.js");
 const { generateRefreshToken } = require("../config/refreshToken.js");
 const { broadcastNotification } = require("../socket/socketHandler.js");
@@ -34,6 +35,18 @@ const createNotification = asyncHandler(async (req, res) => {
      };
 });
 
+// create a coupon
+const createCoupon = asyncHandler(async (req, res) => {
+     try {
+
+          const coupon = await Coupon.create(req.body);
+          res.json(coupon);
+
+     } catch (error) {
+          throw new Error(error);
+     };
+});
+
 // create a user with steam
 const SignIn = asyncHandler(async (req, res) => {
      const steamUser = req.user;
@@ -51,18 +64,9 @@ const SignIn = asyncHandler(async (req, res) => {
                     steamUsername:steamUser.displayName,
                     avatar: steamUser.photos[2].value,
                     token: generateToken(steamUser.id),
-                    sessions: [{ start: new Date(), end: null }],
                });
 
           } else {
-
-               // Обновляем информацию о последней сессии
-               const lastSession = user.sessions[user.sessions.length - 1];
-
-               // Если пользыватель существует обновляем временную метку окончания сеанса
-               if (lastSession.end === null) {
-                    lastSession.end = new Date();
-               };
 
                // Генерация токенов обновление в базе данных 
                const refreshToken = await generateRefreshToken(steamUser.id);
@@ -140,72 +144,6 @@ const refreshToken = asyncHandler(async (req, res) => {
      res.json({ accessToken });
 });
 
-// get daily active users
-const getDailyActiveUsers = asyncHandler(async (req, res) => {
-     try {
-
-          const currentData = new Date();
-          currentData.setHours(0, 0, 0, 0);
-
-          const dayCount = await User.countDocuments({
-               createdAt: { $gte: currentData },
-          });
-
-          res.json({ day: dayCount });
-
-     } catch (error) {
-          throw new Error(error);
-     };
-});
-
-// get weekly active users
-const getWeeklyActiveUsers = asyncHandler(async (req, res) => {
-     try {
-
-          const currentDate = new Date();
-          const startOfWeek = new Date(
-               currentDate.getFullYear(),
-               currentDate.getMonth(),
-               currentDate.getDate() - currentDate.getDay(),
-          );
-
-          startOfWeek.setHours(0, 0, 0, 0);
-
-          const wauCount = await User.countDocuments({
-               createdAt: { $gte: startOfWeek },
-          });
-
-          res.json({ wau: wauCount });
-
-     } catch (error) {
-          throw new Error(error);
-     };
-});
-
-// get monthly active users 
-const getMonthlyActiveUsers = asyncHandler(async (req, res) => {
-     try {
-
-          const currentDate = new Date();
-          const startOfMonth = new Date(
-               currentDate.getFullYear(),
-               currentDate.getMonth(),
-               1
-          );
-
-          startOfMonth.setHours(0, 0, 0, 0);
-
-          const mauCount = await User.countDocuments({
-               createdAt: { $gte: startOfMonth },
-          });
-         
-          res.json({ mau: mauCount });
-
-     } catch (error) {
-          throw new Error(error);
-     };
-});
-
 // get all a user
 const getAllUser = asyncHandler(async (req, res) => {
      try {
@@ -255,12 +193,11 @@ const getAllUser = asyncHandler(async (req, res) => {
 
 // get a user
 const getUser = asyncHandler(async (req, res) => {
-     const { id } = req.params;
-     validateMongoDbId(id);
+     const { steamUsername } = req.body;
 
      try {
 
-          const findUser = await User.findById(id);
+          const findUser = await User.findOne({ steamUsername });
           if (!findUser) throw new Error("User not found");
 
           res.json(findUser);
@@ -317,88 +254,28 @@ const getAllNotification = asyncHandler(async (req, res) => {
      };
 });
 
-// сalculate session statistics
-const getSessionStatisticUser = asyncHandler(async (req, res) => {
+// activation coupon
+const activationCoupon = asyncHandler(async (req, res) => {
+     const id = req.user;
+     const { name } = req.body;
+
      try {
 
-          const currentDate = new Date();
-          const startOfDay = new Date(
-               currentDate.getFullYear(),
-               currentDate.getMonth(),
-               currentDate.getDay(),
-               0,
-               0,
-               0
-          );
+          const user = await User.findById(id);
+          if (user.activatedCoupons.includes(name)) throw new Error("Coupon already activated by the user");
+          
+          const coupon = await Coupon.findOne({ name });
+          if (!coupon) throw new Error("Coupon not found");
 
-          const startOfWeek = new Date(
-               currentDate.getFullYear(),
-               currentDate.getMonth(),
-               currentDate.getDate() - currentDate.getDay(),
-               0,
-               0,
-               0
-          );
+          coupon.activations -= 1;
 
-          const startOfMonth = new Date(
-               currentDate.getFullYear(),
-               currentDate.getMonth(),
-               1,
-               0,
-               0,
-               0
-          );
+          await coupon.save();
+  
+          user.activatedCoupons.push(name);
+          await user.save();
 
-          const users = await User.find({ });
 
-          const dalySessions = users.reduce((count, user) => {
-               const sessions = user.sessions.filter((session) => {
-                    session.start >= startOfDay;
-               });
-
-               count += sessions.length;
-               return count;
-          }, 0);
-
-          const weeklySessions = users.reduce((count, user) => {
-               const sessions = user.sessions.filter((session) => {
-                    session.start >= startOfWeek;
-               });
-
-               count += sessions.length;
-               return count;
-          }, 0);
-
-          const monthlySessions = users.reduce((count, user) => {
-               const sessions = user.sessions.filter((session) => {
-                    session.start >= startOfMonth;
-               });
-
-               count += sessions.length;
-               return count;
-          }, 0);
-
-          const totalSessions = users.reduce((total, user) => {
-               user.sessions.forEach((session) => {
-
-                    if (session.end !== null) {
-                         total += session.end - session.start;
-                    };
-
-               });
-
-               return total;
-          }, 0);
-
-          const averageSessionDuration =
-               totalSessions / (dalySessions + weeklySessions + monthlySessions);
-
-          res.json({
-               dalySessions,
-               weeklySessions,
-               monthlySessions,
-               averageSessionDuration: averageSessionDuration || 0,
-          });
+          res.json(coupon);
 
      } catch (error) {
           throw new Error(error);
@@ -415,6 +292,32 @@ const getNotification = asyncHandler(async (req, res) => {
           if (!findNotification) throw new Error("Notification not found");
 
           res.json(findNotification);
+
+     } catch (error) {
+          throw new Error(error);
+     };
+});
+
+// get all the coupon
+const getAllCoupon = asyncHandler(async (req, res) => {
+     try {
+
+          const findAllCoupon = await Coupon.find();
+          res.json(findAllCoupon);
+
+     } catch (error) {
+          throw new Error(error);
+     };
+});
+
+// get the a coupon
+const getCoupon = asyncHandler(async (req, res) => {
+     const { name } = req.body;
+
+     try {
+
+          const findCoupon = await Coupon.findOne({ name });
+          res.json(findCoupon);
 
      } catch (error) {
           throw new Error(error);
@@ -463,26 +366,18 @@ const blockUserIP = asyncHandler(async (req, res) => {
 
      try {
 
-          const userIP = req.ip || req.connection.remoteAddress;
-
-          if (!(ip.isV4Format(userIP) || ip.isV6Format(userIP))) {
-               throw new Error("Invalid IP address format");
-          };
-
           const user = await User.findById(id);
-          if (!user) throw new Error(error);
+          if (!user) throw new Error("User not found");
 
-          if (user.isBlockedIPs.includes(userIP)) {
-               throw new Error("User's IP is already blocked");
-          };
+          const response = await axios.get("https://api64.ipify.org/?format=json");
+          const ipAddress = response.data.ip;
 
-          user.isBlockedIPs.push(userIP);
+          user.isBlockedIP = ipAddress;
           user.isBlocked = true;
+
           await user.save();
 
-          console.log(`User ${user.steamUsername} IP (${userIP}) blocked successfully`);
-
-          res.json({ message: `User's IP (${userIP}) blocked successfully` });
+          res.json(user);
 
      } catch (error) {
           throw new Error(error);
@@ -495,30 +390,33 @@ const unBlockUserIP = asyncHandler(async (req, res) => {
 
      try {
 
-          const userIP = req.ip || req.connection.remoteAddress;
+          const unBlockIP = await User.findByIdAndUpdate(id, {
+               isBlocked: false,
+               isBlockedIP: "",
+          }, { new: true });
+          if (!unBlockIP) throw new Error("User not found");
 
-          if (!(ip.isV4Format(userIP) || ip.isV6Format(userIP))) {
-               throw new Error("Invalid IP address format");
-          };
+          res.json(unBlockIP);
 
-          const user = await User.findById(id);
-          if (!user) throw new Error(error);
+     } catch (error) {
+          throw new Error(error);
+     };
+});
 
-          if (!user.isBlockedIPs.includes(userIP)) {
-               res.json({ error: "User's IP is not blocked" });
-          }
-         
-          user.isBlockedIPs = user.isBlockedIPs.filter((blockedIP) => blockedIP !== userIP);
+// update a user
+const updateUser = asyncHandler(async (req, res) => {
+     const { id } = req.params;
 
-          if (user.isBlockedIPs.length === 0) {
-               user.isBlocked = false;
-          };
+     try {
 
-          await user.save();
+          const updateUser = await User.findByIdAndUpdate(id, {
+               steamUsername: req?.body?.steamUsername,
+               balance: req?.body?.balance,
+               role: req?.body?.role,
+               isBlocked: req?.body?.isBlocked,
+          });
 
-          console.log(`User ${user.steamUsername} IP (${userIP}) unblocked successfully`);
-
-          res.json({ message: `User's IP (${userIP}) unblocked successfully` });
+          res.json(updateUser);
 
      } catch (error) {
           throw new Error(error);
@@ -581,10 +479,23 @@ const updateNotification = asyncHandler(async (req, res) => {
      };
 });
 
+// delete a coupon
+const deleteCoupon = asyncHandler(async (req, res) => {
+     const { name } = req.body;
+
+     try {
+
+          const deleteCoupon = await Coupon.findOneAndDelete({ name });
+          res.json(deleteCoupon);
+
+     } catch (error) {
+          throw new Error(error);
+     };
+});
+
 // delete a user
 const deleteUser = asyncHandler(async (req, res) => {
      const { id } = req.params;
-     validateMongoDbId(id);
 
      try {
 
@@ -616,19 +527,20 @@ const deleteNotification = asyncHandler(async (req, res) => {
 
 module.exports = { 
      createNotification,
+     createCoupon,
      SignIn, 
+     activationCoupon,
      getAllUser, 
      getUser, 
      getNotification,
      getAllNotification,
-     getDailyActiveUsers,
-     getWeeklyActiveUsers,
-     getMonthlyActiveUsers,
-     getSessionStatisticUser,
+     getCoupon,
+     getAllCoupon,
      logoutUser,
      refreshToken,
      updateNotification,
      updateRoleUser,
+     updateUser,
      blockUser, 
      unBlockUser, 
      blockUserIP,
@@ -636,4 +548,5 @@ module.exports = {
      removeRoleUser,
      deleteUser,
      deleteNotification,
+     deleteCoupon,
 };

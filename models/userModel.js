@@ -6,6 +6,9 @@ let userSchema = new mongoose.Schema({
           type: String,
           required: true,
      },
+     parent_id: {
+          type: String,
+     },
      steamUsername:{
           type: String,
           required: true,   
@@ -19,9 +22,8 @@ let userSchema = new mongoose.Schema({
           type:Boolean,
           default: false,
      },
-     isBlockedIPs: {
-          type: [String],
-          default: [],
+     isBlockedIP: {
+          type: String,
      },
      role: {
           type:String,
@@ -32,12 +34,22 @@ let userSchema = new mongoose.Schema({
           type: String,
           required: true
      },
+     activatedCoupons: {
+          type: [String],
+          default: [],
+     },
+
+     room: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Room',
+     },
 
      notifications: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Notification' }],
-     sessions: [{ start: Date, end: Date }],
+     tradeURL: { type: String },
 
      token: String,
      refreshToken: String,
+     
 }, { timestamps: true });
 
 //Export the model
